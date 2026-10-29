@@ -996,11 +996,10 @@
   </symbol>
 </svg>
 
-<!-- AUDIO ELEMENT: place your own royalty-free MP3 file named "wedding-music.mp3"
-     in the same folder as this HTML file (same folder you upload to GitHub).
-     Pixabay/YouTube links cannot be hotlinked directly - the file must be hosted with the site. -->
+<!-- AUDIO: the browser tries the first source, then falls back to anbil_avan.mp3 (keep that file in the same GitHub folder as this HTML). -->
 <audio id="bgMusic" loop preload="auto">
-  <source src="wedding-music.mp3" type="audio/mpeg">
+  <source src="https://cdn.pixabay.com/download/audio/2022/10/14/audio_9939f792cb.mp3?filename=indian-traditional-wedding-flute-123471.mp3" type="audio/mpeg">
+  <source src="anbil_avan.mp3" type="audio/mpeg">
 </audio>
 
 <div class="floating-controls">
@@ -1212,27 +1211,120 @@
   const musicText = document.getElementById('musicText');
   const musicIcon = document.getElementById('musicIcon');
   let isPlaying = false;
+  let usingSynth = false;
+  let fileFailed = false;
+  let synth = null;
+
+  function setPlayingUI(on) {
+    isPlaying = on;
+    musicBtn.classList.toggle('playing', on);
+    musicText.textContent = on ? "Mute" : "Play";
+    musicIcon.innerHTML = on ? "&#9835;" : "&#128263;";
+  }
+
+  /* Built-in soft background music (no file needed).
+     It starts automatically if the online / MP3 track cannot load. */
+  function createSynth() {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    const ctx = new AC();
+    const master = ctx.createGain(); master.gain.value = 0;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 2200;
+    const delay = ctx.createDelay(1.0); delay.delayTime.value = 0.38;
+    const fb = ctx.createGain(); fb.gain.value = 0.38;
+    const wet = ctx.createGain(); wet.gain.value = 0.45;
+    lp.connect(master); lp.connect(delay);
+    delay.connect(fb); fb.connect(delay); delay.connect(wet); wet.connect(master);
+    master.connect(ctx.destination);
+
+    // soft tanpura-style drone on D
+    const drone = ctx.createGain(); drone.gain.value = 0.10; drone.connect(lp);
+    [146.83, 220.0, 293.66].forEach((f, i) => {
+      const o = ctx.createOscillator();
+      o.type = i === 2 ? 'sine' : 'triangle';
+      o.frequency.value = f; o.detune.value = (i - 1) * 4;
+      o.connect(drone); o.start();
+    });
+    const lfo = ctx.createOscillator(), lfoGain = ctx.createGain();
+    lfo.frequency.value = 0.12; lfoGain.gain.value = 0.03;
+    lfo.connect(lfoGain); lfoGain.connect(drone.gain); lfo.start();
+
+    // gentle pentatonic melody (D major pentatonic)
+    const scale = [293.66, 329.63, 369.99, 440.0, 493.88, 587.33, 659.25];
+    let idx = 2, timer = null, nextT = 0;
+    function note(t, f, dur) {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = 'triangle'; o.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.16, t + 0.03);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      o.connect(g); g.connect(lp); o.start(t); o.stop(t + dur + 0.05);
+      const o2 = ctx.createOscillator(), g2 = ctx.createGain();
+      o2.type = 'sine'; o2.frequency.value = f * 2;
+      g2.gain.setValueAtTime(0.0001, t);
+      g2.gain.exponentialRampToValueAtTime(0.04, t + 0.02);
+      g2.gain.exponentialRampToValueAtTime(0.0001, t + dur * 0.7);
+      o2.connect(g2); g2.connect(lp); o2.start(t); o2.stop(t + dur + 0.05);
+    }
+    function schedule() {
+      while (nextT < ctx.currentTime + 1.2) {
+        if (Math.random() > 0.22) {
+          const step = [-2, -1, -1, 0, 1, 1, 2][(Math.random() * 7) | 0];
+          idx = Math.max(0, Math.min(scale.length - 1, idx + step));
+          note(nextT, scale[idx], 1.8);
+        }
+        nextT += 0.55;
+      }
+    }
+    return {
+      ctx,
+      start() {
+        ctx.resume();
+        nextT = ctx.currentTime + 0.2;
+        master.gain.cancelScheduledValues(ctx.currentTime);
+        master.gain.setTargetAtTime(0.85, ctx.currentTime, 0.6);
+        clearInterval(timer); schedule(); timer = setInterval(schedule, 250);
+      },
+      stop() {
+        clearInterval(timer); timer = null;
+        master.gain.cancelScheduledValues(ctx.currentTime);
+        master.gain.setTargetAtTime(0, ctx.currentTime, 0.25);
+        setTimeout(() => { if (!timer) ctx.suspend(); }, 1200);
+      }
+    };
+  }
+
+  function startSynth() {
+    try {
+      if (!synth) synth = createSynth();
+      if (!synth) throw new Error('Web Audio not supported');
+      synth.start();
+      usingSynth = true;
+      setPlayingUI(true);
+    } catch (e) {
+      console.log("Built-in music could not start:", e);
+      musicText.textContent = "No audio";
+    }
+  }
 
   function playAudio() {
+    // unlock Web Audio inside the tap, so the built-in music can start if the track fails to load
+    if (!synth) { try { synth = createSynth(); } catch (e) { synth = null; } }
+    if (fileFailed) { startSynth(); return; }
     bgMusic.play().then(() => {
-      isPlaying = true;
-      musicBtn.classList.add('playing');
-      musicText.textContent = "Mute";
-      musicIcon.innerHTML = "&#9835;";
+      usingSynth = false;
+      setPlayingUI(true);
+      if (synth) synth.ctx.suspend();
     }).catch(err => {
-      console.log("Audio could not play (file missing or blocked):", err);
-      musicText.textContent = "No audio file";
-      musicBtn.style.opacity = "0.55";
-      musicBtn.style.cursor = "not-allowed";
+      console.log("Track could not play, using built-in music:", err);
+      fileFailed = true;
+      startSynth();
     });
   }
 
   function pauseAudio() {
-    bgMusic.pause();
-    isPlaying = false;
-    musicBtn.classList.remove('playing');
-    musicText.textContent = "Play";
-    musicIcon.innerHTML = "&#128263;";
+    if (usingSynth && synth) { synth.stop(); } else { bgMusic.pause(); }
+    setPlayingUI(false);
   }
 
   musicBtn.addEventListener('click', () => {
@@ -1301,6 +1393,7 @@
     if (!hero || !cv || (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches)) return;
     const ctx = cv.getContext('2d');
     let W = 0, H = 0, petals = [], sparks = [], raf = null, last = 0, inView = true;
+    let lanes = [], laneN = 1;   // even left/right spread
     const PETAL_COLORS = ['#E58C9B','#F2B3BC','#D96A80','#F4C86A','#E9A93E','#F7D9DD'];
 
     function resize(){
@@ -1309,33 +1402,41 @@
       cv.width = W * dpr; cv.height = H * dpr;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       const small = W < 640;
-      const np = small ? 14 : 24, ns = small ? 16 : 30;
+      const np = small ? 8 : 14, ns = small ? 10 : 18;
+      laneN = np; lanes = [];
       petals = Array.from({length: np}, () => newPetal(true));
-      sparks = Array.from({length: ns}, () => newSpark());
+      sparks = Array.from({length: ns}, (_, i) => { const k = newSpark(); k.x = (i + Math.random()) / ns * W; return k; });
+    }
+    function nextX(){
+      if (!lanes.length){
+        lanes = Array.from({length: laneN}, (_, i) => i);
+        for (let i = lanes.length - 1; i > 0; i--){ const j = (Math.random() * (i + 1)) | 0; [lanes[i], lanes[j]] = [lanes[j], lanes[i]]; }
+      }
+      return (lanes.pop() + Math.random()) / laneN * W;
     }
     function newPetal(initial){
       return {
-        x: Math.random() * W,
-        y: initial ? Math.random() * H : -20 - Math.random() * 80,
-        s: 7 + Math.random() * 8,
-        vy: 28 + Math.random() * 38,
-        sway: 18 + Math.random() * 34,
-        swayF: 0.5 + Math.random() * 0.9,
+        x: nextX(),
+        y: initial ? Math.random() * H : -20 - Math.random() * 140,
+        s: 5 + Math.random() * 5,
+        vy: 16 + Math.random() * 18,
+        sway: 10 + Math.random() * 16,
+        swayF: 0.3 + Math.random() * 0.45,
         ph: Math.random() * Math.PI * 2,
         rot: Math.random() * Math.PI * 2,
-        vr: (Math.random() - 0.5) * 1.6,
+        vr: (Math.random() - 0.5) * 0.6,
         color: PETAL_COLORS[(Math.random() * PETAL_COLORS.length) | 0],
-        a: 0.55 + Math.random() * 0.35,
+        a: 0.38 + Math.random() * 0.27,
         t: Math.random() * 100
       };
     }
     function newSpark(){
       return {
         x: Math.random() * W, y: Math.random() * H,
-        r: 2 + Math.random() * 3.5,
-        f: 0.8 + Math.random() * 1.8,
+        r: 1.4 + Math.random() * 2.2,
+        f: 0.5 + Math.random() * 1.0,
         ph: Math.random() * Math.PI * 2,
-        vy: -4 - Math.random() * 8,
+        vy: -2 - Math.random() * 4,
         color: Math.random() < 0.5 ? '#C59A4E' : '#E2C285'
       };
     }
@@ -1343,8 +1444,10 @@
       ctx.save();
       ctx.translate(p.x + Math.sin(p.t * p.swayF + p.ph) * p.sway, p.y);
       ctx.rotate(p.rot);
-      ctx.scale(Math.cos(p.t * 1.3 + p.ph) * 0.6 + 0.7, 1);
-      ctx.globalAlpha = p.a;
+      ctx.scale(Math.cos(p.t * 0.8 + p.ph) * 0.22 + 0.8, 1);
+      const fadeIn = Math.min(1, Math.max(0, p.y / 70));
+      const fadeOut = Math.min(1, Math.max(0, (H - p.y) / 90));
+      ctx.globalAlpha = p.a * fadeIn * fadeOut;
       ctx.fillStyle = p.color;
       const s = p.s;
       ctx.beginPath();
@@ -1356,10 +1459,10 @@
     }
     function drawSpark(k, t){
       const tw = (Math.sin(t * k.f + k.ph) + 1) / 2;
-      const r = k.r * (0.4 + tw * 0.9);
+      const r = k.r * (0.5 + tw * 0.6);
       ctx.save();
       ctx.translate(k.x, k.y);
-      ctx.globalAlpha = 0.15 + tw * 0.85;
+      ctx.globalAlpha = 0.08 + tw * 0.6;
       ctx.fillStyle = k.color;
       ctx.beginPath();
       ctx.moveTo(0, -r * 2); ctx.quadraticCurveTo(0, 0, r * 2, 0);
